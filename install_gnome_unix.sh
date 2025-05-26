@@ -17,6 +17,11 @@ VERBOSE=false
 
 # Check for root privileges
 check_root() {
+    if [ "$TEST_MODE" = true ]; then
+        log "Skipping root check in test mode" "TEST"
+        return 0
+    fi
+    
     if [ "$(id -u)" -ne 0 ]; then
         echo "ERROR: This script must be run as root" | tee -a "$LOG_FILE"
         exit 1
@@ -26,12 +31,36 @@ check_root() {
 # Function to log messages
 log() {
     local message="$1"
+    local level="$2"
     local timestamp
     timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-    echo "[$timestamp] $message" >> "$LOG_FILE"
     
-    if [ "$VERBOSE" = true ]; then
-        echo "[$timestamp] $message"
+    # Format based on log level if provided
+    if [ -n "$level" ]; then
+        echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
+        
+        if [ "$VERBOSE" = true ] || [ "$level" = "ERROR" ] || [ "$level" = "WARNING" ] || [ "$TEST_MODE" = true ]; then
+            # Show color-coded output for different log levels
+            case "$level" in
+                "ERROR")
+                    echo "[$timestamp] [$level] $message" >&2
+                    ;;
+                "WARNING")
+                    echo "[$timestamp] [$level] $message"
+                    ;;
+                "TEST")
+                    echo "[$timestamp] [$level] $message"
+                    ;;
+                *)
+                    echo "[$timestamp] [$level] $message"
+                    ;;
+            esac
+        fi
+    else
+        echo "[$timestamp] $message" >> "$LOG_FILE"
+        if [ "$VERBOSE" = true ] || [ "$TEST_MODE" = true ]; then
+            echo "[$timestamp] $message"
+        fi
     fi
 }
 
@@ -138,10 +167,15 @@ detect_package_manager() {
 install_gnome() {
     log "Installing GNOME desktop environment using $PKG_MANAGER..."
     
+    if [ "$TEST_MODE" = true ]; then
+        log "TEST MODE: Would update package repositories with: $PKG_UPDATE" "TEST"
+        return 0
+    fi
+    
     # Update package repositories
     log "Updating package repositories..."
     eval "$PKG_UPDATE" || {
-        log "ERROR: Failed to update package repositories"
+        log "ERROR: Failed to update package repositories" "ERROR"
         exit 1
     }
     
@@ -200,10 +234,15 @@ install_gnome() {
     
     # Install GNOME packages
     log "Installing GNOME packages: $PACKAGES"
-    eval "$PKG_INSTALL $PACKAGES" || {
-        log "ERROR: Failed to install GNOME packages"
-        exit 1
-    }
+    
+    if [ "$TEST_MODE" = true ]; then
+        log "TEST MODE: Would install GNOME packages: $PACKAGES" "TEST"
+    else
+        eval "$PKG_INSTALL $PACKAGES" || {
+            log "ERROR: Failed to install GNOME packages" "ERROR"
+            exit 1
+        }
+    fi
     
     # Configure display manager based on system and package manager
     configure_display_manager
@@ -215,18 +254,23 @@ install_gnome() {
 configure_display_manager() {
     log "Configuring display manager..."
     
+    if [ "$TEST_MODE" = true ]; then
+        log "TEST MODE: Would configure display manager for $SYSTEM" "TEST"
+        return 0
+    fi
+    
     case "$SYSTEM" in
         linux)
             # Enable display manager service if systemd is available
             if command_exists systemctl; then
                 if [ -f /lib/systemd/system/gdm.service ] || [ -f /usr/lib/systemd/system/gdm.service ]; then
-                    systemctl enable gdm.service || log "Warning: Failed to enable GDM service"
+                    systemctl enable gdm.service || log "Warning: Failed to enable GDM service" "WARNING"
                 elif [ -f /lib/systemd/system/gdm3.service ] || [ -f /usr/lib/systemd/system/gdm3.service ]; then
-                    systemctl enable gdm3.service || log "Warning: Failed to enable GDM3 service"
+                    systemctl enable gdm3.service || log "Warning: Failed to enable GDM3 service" "WARNING"
                 fi
                 
                 # Set default target to graphical
-                systemctl set-default graphical.target || log "Warning: Failed to set graphical target"
+                systemctl set-default graphical.target || log "Warning: Failed to set graphical target" "WARNING"
             # For non-systemd systems
             elif [ -d /etc/init.d ] || [ -d /etc/rc.d/init.d ]; then
                 if [ -f /etc/init.d/gdm ]; then
@@ -271,10 +315,14 @@ Options:
   -v, --verbose  Enable verbose output
   -m, --minimal  Install minimal GNOME desktop
   -y, --yes      Automatic yes to prompts
+  -t, --test     Test mode (no system changes)
 
 Description:
   This script automatically installs the GNOME desktop environment
   on various Unix-like systems without requiring user intervention.
+  
+  In test mode, no actual system changes will be made. This is useful
+  for CI/CD testing and verifying script behavior.
 EOF
 }
 
@@ -298,6 +346,11 @@ parse_args() {
                 AUTO_YES=true
                 shift
                 ;;
+            -t|--test)
+                TEST_MODE=true
+                VERBOSE=true
+                shift
+                ;;
             *)
                 echo "Unknown option: $1"
                 show_usage
@@ -312,6 +365,7 @@ main() {
     # Initialize variables
     MINIMAL=false
     AUTO_YES=false
+    TEST_MODE=false
     
     # Parse command-line arguments
     parse_args "$@"
@@ -321,6 +375,10 @@ main() {
     
     log "=== Starting GNOME Installation ==="
     log "Script version: 1.0"
+    
+    if [ "$TEST_MODE" = true ]; then
+        log "Running in TEST MODE - No system changes will be made" "TEST"
+    fi
     
     # Detect system type and package manager
     detect_system

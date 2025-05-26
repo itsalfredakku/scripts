@@ -152,12 +152,18 @@ When run with TestMode, the script:
 - Performs validation checks on paths and configurations
 - Reports what actions would be taken in a non-test environment
 
-### GitHub Actions Workflow
+### GitHub Actions Workflows
 
-A GitHub Actions workflow automatically tests the Windows RDP script:
-- Triggered on pushes and pull requests affecting the script
-- Verifies syntax, implementation, and functionality
-- Generates a test report artifact
+Multiple GitHub Actions workflows are set up for testing:
+
+1. **Individual Script Workflows**:
+   - Windows RDP setup testing
+   - Unix GNOME installation testing
+
+2. **Unified CI/CD Workflow**:
+   - Tests all scripts in the repository
+   - Detects changes and runs only relevant tests
+   - Generates combined test reports
 
 For more information on the CI/CD setup, see the [.github/README.md](.github/README.md) file.
 

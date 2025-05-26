@@ -20,10 +20,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       
-      - name: Set up PowerShell
-        uses: actions/setup-powershell@v1
-        with:
-          powershell-version: '7.3'
+      # PowerShell Core is already installed on GitHub-hosted runners
+      - name: Check PowerShell version
+        shell: pwsh
+        run: |
+          Write-Output "Using PowerShell version: $($PSVersionTable.PSVersion)"
       
       - name: Check PowerShell script syntax
         shell: pwsh

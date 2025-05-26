@@ -15,9 +15,27 @@ VERBOSE=false
 PORT=3389
 AUTO_START=true
 ENABLE_FIREWALL=true
-
-# Check for root privileges
+TEST_MODE=f# Function to configure XRDP
+configure_xrdp() {
+    log "Configuring XRDP..."
+    
+    if [ "$TEST_MODE" = true ]; then
+        log "TEST MODE: Would configure XRDP for $DESKTOP desktop environment" "TEST"
+        log "TEST MODE: Would configure port to $PORT" "TEST"
+        log "TEST MODE: Would create session configuration files" "TEST"
+        return 0
+    }
+    
+    # Backup original configuration
+    if [ -f /etc/xrdp/xrdp.ini ]; then
+        cp /etc/xrdp/xrdp.ini /etc/xrdp/xrdp.ini.backup || log "Warning: Failed to backup xrdp.ini" "WARNING"
+    }Check for root privileges
 check_root() {
+    if [ "$TEST_MODE" = true ]; then
+        echo "[TEST MODE] Skipping root check"
+        return 0
+    fi
+    
     if [ "$(id -u)" -ne 0 ]; then
         echo "ERROR: This script must be run as root" | tee -a "$LOG_FILE"
         exit 1
@@ -27,12 +45,30 @@ check_root() {
 # Function to log messages
 log() {
     local message="$1"
+    local level="${2:-INFO}"
     local timestamp
     timestamp=$(date "+%Y-%m-%d %H:%M:%S")
-    echo "[$timestamp] $message" >> "$LOG_FILE"
     
-    if [ "$VERBOSE" = true ]; then
-        echo "[$timestamp] $message"
+    echo "[$timestamp] [$level] $message" >> "$LOG_FILE"
+    
+    # Always show TEST, ERROR, and WARNING messages
+    # Show INFO messages only with verbose flag
+    if [ "$VERBOSE" = true ] || [ "$level" = "ERROR" ] || [ "$level" = "WARNING" ] || [ "$level" = "TEST" ]; then
+        # Color output based on level
+        case "$level" in
+            "ERROR")
+                echo -e "[\033[1;31m$timestamp\033[0m] [\033[1;31m$level\033[0m] $message"
+                ;;
+            "WARNING")
+                echo -e "[\033[1;33m$timestamp\033[0m] [\033[1;33m$level\033[0m] $message"
+                ;;
+            "TEST")
+                echo -e "[\033[1;36m$timestamp\033[0m] [\033[1;36m$level\033[0m] $message"
+                ;;
+            *)
+                echo "[$timestamp] [$level] $message"
+                ;;
+        esac
     fi
 }
 
@@ -99,9 +135,16 @@ detect_desktop() {
 install_xrdp_debian() {
     log "Installing XRDP on Debian/Ubuntu..."
     
+    if [ "$TEST_MODE" = true ]; then
+        log "TEST MODE: Would update package lists with apt-get update" "TEST"
+        log "TEST MODE: Would install packages: xrdp xorgxrdp" "TEST"
+        log "TEST MODE: Would configure XRDP for $DESKTOP desktop environment" "TEST"
+        return 0
+    fi
+    
     # Update package lists
     apt-get update -y || {
-        log "ERROR: Failed to update package lists"
+        log "ERROR: Failed to update package lists" "ERROR"
         exit 1
     }
     
@@ -522,6 +565,7 @@ Options:
   -n, --no-autostart      Don't enable XRDP service to start on boot
   -f, --no-firewall       Don't configure firewall
   -y, --yes               Automatic yes to prompts
+  -t, --test              Run in test mode without making system changes
 
 Description:
   This script automatically installs and configures XRDP server
@@ -557,6 +601,11 @@ parse_args() {
                 AUTO_YES=true
                 shift
                 ;;
+            -t|--test)
+                TEST_MODE=true
+                VERBOSE=true
+                shift
+                ;;
             *)
                 echo "Unknown option: $1"
                 show_usage
@@ -579,6 +628,10 @@ main() {
     
     log "=== Starting XRDP Server Setup ==="
     log "Script version: 1.0"
+    
+    if [ "$TEST_MODE" = true ]; then
+        log "Running in TEST MODE - No system changes will be made" "TEST"
+    fi
     
     # Detect Linux distribution and desktop environment
     detect_distro

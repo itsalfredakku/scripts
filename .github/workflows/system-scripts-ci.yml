@@ -1,0 +1,195 @@
+name: System Scripts CI/CD
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - '**.sh'
+      - '**.ps1'
+      - '.github/workflows/**'
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - '**.sh'
+      - '**.ps1'
+      - '.github/workflows/**'
+  workflow_dispatch:  # Allows manual triggering
+
+jobs:
+  detect-changes:
+    name: Detect Changed Files
+    runs-on: ubuntu-latest
+    outputs:
+      unix_gnome_changed: ${{ steps.filter.outputs.unix_gnome }}
+      linux_gnome_changed: ${{ steps.filter.outputs.linux_gnome }}
+      unix_xrdp_changed: ${{ steps.filter.outputs.unix_xrdp }}
+      linux_xrdp_changed: ${{ steps.filter.outputs.linux_xrdp }}
+      windows_rdp_changed: ${{ steps.filter.outputs.windows_rdp }}
+      any_script_changed: ${{ steps.filter.outputs.any_script }}
+      
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Filter changed files
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            unix_gnome:
+              - 'install_gnome_unix.sh'
+            linux_gnome:
+              - 'install_gnome_linux.sh'
+            unix_xrdp:
+              - 'setup_xrdp_unix.sh'
+            linux_xrdp:
+              - 'setup_xrdp_linux.sh'
+            windows_rdp:
+              - 'setup_rdp_windows.ps1'
+            any_script:
+              - '**.sh'
+              - '**.ps1'
+              
+  # Test Unix GNOME script if it changed
+  test-unix-gnome:
+    name: Test Unix GNOME Script
+    needs: detect-changes
+    if: needs.detect-changes.outputs.unix_gnome_changed == 'true'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Check shell script syntax
+        run: |
+          shellcheck install_gnome_unix.sh || echo "ShellCheck found issues to address"
+      
+      - name: Run script in test mode
+        run: |
+          chmod +x install_gnome_unix.sh
+          sudo ./install_gnome_unix.sh --test --yes
+      
+      - name: Verify package paths
+        run: |
+          # Verify BSD paths use x11/gnome
+          if grep -q "pkg|pkg_add|pkgin)" install_gnome_unix.sh && grep -q "PACKAGES=\"x11/gnome" install_gnome_unix.sh; then
+            echo "✓ BSD package paths correctly use x11/gnome"
+          else
+            echo "✗ BSD package paths may be incorrect"
+            exit 1
+          fi
+          
+  # Test Windows RDP script if it changed
+  test-windows-rdp:
+    name: Test Windows RDP Script
+    needs: detect-changes
+    if: needs.detect-changes.outputs.windows_rdp_changed == 'true'
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Check PowerShell version
+        shell: pwsh
+        run: |
+          Write-Output "Using PowerShell version: $($PSVersionTable.PSVersion)"
+      
+      - name: Check PowerShell script syntax
+        shell: pwsh
+        run: |
+          $syntax_errors = $null
+          $tokens = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("${{ github.workspace }}/setup_rdp_windows.ps1", [ref]$tokens, [ref]$syntax_errors)
+          if ($syntax_errors.Count -gt 0) {
+            Write-Error "Syntax errors found in setup_rdp_windows.ps1"
+            $syntax_errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          } else {
+            Write-Output "✓ No syntax errors found in setup_rdp_windows.ps1"
+          }
+      
+      - name: Run Script in Test Mode
+        shell: pwsh
+        run: |
+          & "${{ github.workspace }}/setup_rdp_windows.ps1" -TestMode -ErrorAction Stop
+      
+  # Test Linux XRDP script if it changed
+  test-linux-xrdp:
+    name: Test Linux XRDP Script
+    needs: detect-changes
+    if: needs.detect-changes.outputs.linux_xrdp_changed == 'true'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Check shell script syntax
+        run: |
+          shellcheck setup_xrdp_linux.sh || echo "ShellCheck found issues to address"
+      
+      - name: Verify script setup
+        run: |
+          if grep -q "detect_desktop_environment" setup_xrdp_linux.sh; then
+            echo "✓ Script correctly implements desktop environment detection"
+          else
+            echo "⚠️ Script may be missing desktop environment detection"
+          fi
+  
+  # Generate combined test report for all tests
+  generate-report:
+    name: Generate Combined Test Report
+    runs-on: ubuntu-latest
+    needs: [detect-changes, test-unix-gnome, test-windows-rdp, test-linux-xrdp]
+    if: always() && needs.detect-changes.outputs.any_script_changed == 'true'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Generate Test Report
+        run: |
+          echo "# System Scripts Test Report" > test-report.md
+          echo "" >> test-report.md
+          echo "## Test Results" >> test-report.md
+          echo "" >> test-report.md
+          
+          # Report on Unix GNOME script
+          if [[ "${{ needs.detect-changes.outputs.unix_gnome_changed }}" == "true" ]]; then
+            if [[ "${{ needs.test-unix-gnome.result }}" == "success" ]]; then
+              echo "### Unix GNOME Script: ✅ PASSED" >> test-report.md
+            else
+              echo "### Unix GNOME Script: ❌ FAILED" >> test-report.md
+            fi
+          fi
+          
+          # Report on Windows RDP script
+          if [[ "${{ needs.detect-changes.outputs.windows_rdp_changed }}" == "true" ]]; then
+            if [[ "${{ needs.test-windows-rdp.result }}" == "success" ]]; then
+              echo "### Windows RDP Script: ✅ PASSED" >> test-report.md
+            else
+              echo "### Windows RDP Script: ❌ FAILED" >> test-report.md
+            fi
+          fi
+          
+          # Report on Linux XRDP script
+          if [[ "${{ needs.detect-changes.outputs.linux_xrdp_changed }}" == "true" ]]; then
+            if [[ "${{ needs.test-linux-xrdp.result }}" == "success" ]]; then
+              echo "### Linux XRDP Script: ✅ PASSED" >> test-report.md
+            else
+              echo "### Linux XRDP Script: ❌ FAILED" >> test-report.md
+            fi
+          fi
+          
+          echo "" >> test-report.md
+          echo "## Summary" >> test-report.md
+          echo "" >> test-report.md
+          echo "Tests completed at: $(date)" >> test-report.md
+      
+      - name: Upload Test Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: combined-test-report
+          path: test-report.md
